@@ -74,6 +74,50 @@ class BundleGenerator:
         except Exception as e:
             logger.error(f"Failed to generate bundle: {str(e)}")
             return None
+
+    def generate_resources_only(
+        self, 
+        workflow: Dict[str, Any], 
+        include_dependencies: bool = True
+    ) -> Optional[str]:
+        """
+        Generate only the resources section for the given workflow.
+        
+        Args:
+            workflow: Workflow information dictionary
+            include_dependencies: Whether to include dependencies
+            
+        Returns:
+            Generated resources YAML as string, or None if failed
+        """
+        try:
+            logger.info(f"Generating resources-only for workflow: {workflow.get('name', 'Unknown')}")
+            
+            # Get detailed workflow information
+            detailed_workflow = self.db_client.get_workflow_details(workflow['job_id'])
+            if not detailed_workflow:
+                logger.error("Failed to get detailed workflow information")
+                return None
+            
+            # Create only resources structure
+            resources = {'resources': {'jobs': {}}}
+            
+            # Add workflow resources
+            self._add_workflow_resources(resources, detailed_workflow)
+            
+            # Add dependencies if requested
+            if include_dependencies:
+                self._add_dependencies(resources, detailed_workflow)
+            
+            # Convert to YAML
+            resources_yaml = self._convert_resources_to_yaml(resources, workflow)
+            
+            logger.info(f"Successfully generated resources for workflow: {workflow.get('name', 'Unknown')}")
+            return resources_yaml
+            
+        except Exception as e:
+            logger.error(f"Failed to generate resources: {str(e)}")
+            return None
     
     def _create_bundle_structure(
         self, 
@@ -426,4 +470,34 @@ class BundleGenerator:
             
         except Exception as e:
             logger.error(f"Failed to convert bundle to YAML: {str(e)}")
+            return f"# Error generating YAML: {str(e)}"
+
+    def _convert_resources_to_yaml(self, resources: Dict[str, Any], workflow: Dict[str, Any]) -> str:
+        """Convert resources dictionary to YAML string."""
+        try:
+            workflow_name = workflow.get('name', 'Unknown')
+            job_id = workflow.get('job_id', 'N/A')
+            
+            # Add header comment for resources-only file
+            header = f"""# Databricks Asset Bundle Resources
+# Generated on: {datetime.now().isoformat()}
+# Workflow: {workflow_name}
+# Job ID: {job_id}
+# Contains only the 'resources:' section for this workflow
+
+"""
+            
+            # Convert to YAML with proper formatting
+            yaml_content = yaml.dump(
+                resources,
+                default_flow_style=False,
+                indent=2,
+                sort_keys=False,
+                allow_unicode=True
+            )
+            
+            return header + yaml_content
+            
+        except Exception as e:
+            logger.error(f"Failed to convert resources to YAML: {str(e)}")
             return f"# Error generating YAML: {str(e)}"

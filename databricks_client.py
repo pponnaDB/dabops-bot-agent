@@ -11,7 +11,7 @@ from datetime import datetime
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.jobs import Job
-from databricks.sdk.service.workspace import ObjectInfo, ObjectType
+from databricks.sdk.service.workspace import ObjectInfo, ObjectType, ImportFormat
 from databricks.sdk.core import DatabricksError
 
 from config import AppConfig
@@ -73,12 +73,13 @@ class DatabricksClient:
             return None
     
     @handle_databricks_error
-    def list_workflows(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def list_workflows(self, limit: int = 100, user_only: bool = True) -> List[Dict[str, Any]]:
         """
-        List all workflows (jobs) in the workspace.
+        List workflows (jobs) in the workspace.
         
         Args:
             limit: Maximum number of workflows to return
+            user_only: If True, only return workflows owned by the current user
             
         Returns:
             List of workflow information dictionaries
@@ -93,6 +94,10 @@ class DatabricksClient:
             jobs = list(self.client.jobs.list(limit=limit))
             
             for job in jobs:
+                # Filter by current user if user_only is True
+                if user_only and job.creator_user_name != self.current_user:
+                    continue
+                    
                 workflow_info = {
                     'job_id': job.job_id,
                     'name': job.settings.name if job.settings else 'Unnamed Job',
@@ -110,7 +115,8 @@ class DatabricksClient:
                 
                 workflows.append(workflow_info)
             
-            logger.info(f"Retrieved {len(workflows)} workflows from workspace")
+            filter_msg = "user-owned" if user_only else "all"
+            logger.info(f"Retrieved {len(workflows)} {filter_msg} workflows from workspace")
             return workflows
             
         except Exception as e:
@@ -215,13 +221,15 @@ class DatabricksClient:
         try:
             # Ensure the directory exists
             directory = '/'.join(path.split('/')[:-1])
+            logger.debug(f"Ensuring directory exists: {directory}")
             self._ensure_workspace_directory(directory)
             
             # Save the file
+            logger.debug(f"Uploading file to workspace: {path} (size: {len(content)} chars)")
             self.client.workspace.upload(
                 path=path,
                 content=content.encode('utf-8'),
-                format=ObjectType.FILE,
+                format=ImportFormat.AUTO,
                 overwrite=True
             )
             
@@ -230,6 +238,7 @@ class DatabricksClient:
             
         except Exception as e:
             logger.error(f"Failed to save file to workspace {path}: {str(e)}")
+            logger.debug(f"File content preview: {content[:200]}..." if len(content) > 200 else content)
             return False
     
     def _ensure_workspace_directory(self, directory: str):
@@ -237,13 +246,17 @@ class DatabricksClient:
         try:
             # Try to get the directory info
             self.client.workspace.get_status(directory)
-        except:
+            logger.debug(f"Directory already exists: {directory}")
+        except Exception as get_error:
             # Directory doesn't exist, create it
+            logger.debug(f"Directory not found, creating: {directory}")
             try:
                 self.client.workspace.mkdirs(directory)
                 logger.info(f"Created workspace directory: {directory}")
-            except Exception as e:
-                logger.warning(f"Failed to create directory {directory}: {str(e)}")
+            except Exception as create_error:
+                logger.error(f"Failed to create directory {directory}: {str(create_error)}")
+                logger.debug(f"Original get_status error: {str(get_error)}")
+                raise create_error
     
     @handle_databricks_error
     def get_workspace_files(self, path: str) -> List[Dict[str, Any]]:
